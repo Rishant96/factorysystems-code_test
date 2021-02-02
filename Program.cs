@@ -20,8 +20,8 @@ namespace Code
                 connection.Open();
                 string measurements = "SELECT test_uid, x, y, height FROM Measurements LIMIT 1005"; 
 
-                using var cmd = new SqliteCommand(measurements, connection);
-                SqliteDataReader reader = cmd.ExecuteReader();
+                using var getMeasurementsCmd = new SqliteCommand(measurements, connection);
+                SqliteDataReader reader = getMeasurementsCmd.ExecuteReader();
 
                 var testUIDs = new SortedSet<int>();
 
@@ -35,7 +35,9 @@ namespace Code
                         decimal maxHeight, 
                         (decimal maxHeightX, decimal maxHeightY) maxPos, 
                         decimal heightSum,
-                        int count
+                        int count,
+                        decimal avgRoughness,
+                        decimal rmsRoughness
                     )
                 > ();
 
@@ -56,7 +58,9 @@ namespace Code
                             height,
                             (xPos, yPos),
                             height,
-                            1
+                            1,
+                            -1.0M,
+                            -1.0M
                         );
                     }
                     else {
@@ -69,21 +73,38 @@ namespace Code
                            isMax ? height : testInfo[currTestUID].maxHeight,
                            !isMax ? testInfo[currTestUID].maxPos : (xPos, yPos),
                            testInfo[currTestUID].heightSum + height,
-                           testInfo[currTestUID].count + 1 
+                           testInfo[currTestUID].count + 1,
+                           -1.0M,
+                           -1.0M
                        );
                     }
                 }
-                WriteLine("" + 
-                    testInfo[1].minHeight + ", " +
-                    testInfo[1].minPos + ", " +
-                    testInfo[1].maxHeight + ", " +
-                    testInfo[1].maxPos + ", " +
-                    testInfo[1].heightSum + ", " +
-                    testInfo[1].count + ", " +
-                    testInfo[1].heightSum / testInfo[1].count 
-                );
 
-                WriteLine(testInfo[1].maxHeight - testInfo[1].minHeight);
+                string measurementsHeightsOnly = "SELECT test_uid, height FROM Measurements LIMIT 1005"; 
+
+                using var getHeightsOnlyCmd = new SqliteCommand(measurementsHeightsOnly, connection);
+                reader = getHeightsOnlyCmd.ExecuteReader();
+
+                var errors = new Dictionary<int, (decimal absErr, double rmsErr)>();
+
+                while (reader.Read()) {
+                    int currID = reader.GetInt32(0);
+                    if (testUIDs.Contains(currID)) {
+                        if (! errors.ContainsKey(currID)) {
+                            errors.Add(currID, (0.0M, 0.0));
+                        }
+                        decimal height = reader.GetDecimal(1);
+                        decimal err = height - 
+                            (testInfo[currID].heightSum / testInfo[currID].count);
+                        errors[currID] = (
+                            errors[currID].absErr + Math.Abs(err), 
+                            errors[currID].rmsErr + Math.Pow((double) err, 2)
+                        );
+                    }
+                    else {
+                        throw new Exception("Something went wrong");
+                    }
+                }
             }
         }
     }
