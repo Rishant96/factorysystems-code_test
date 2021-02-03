@@ -119,7 +119,7 @@ namespace Code
                 reader = getTestCmd.ExecuteReader();
 
                 var csv = new StringBuilder();
-                csv.AppendLine($"test_uid, sTime, PlaneID, Operator, min_height, min_height_X, min_height_Y, max_height, max_height_X, max_height_Y, mean_height, range_height, avg_roughness, rms_roughness");
+                csv.AppendLine($"test_uid, test_count, sTime, PlaneID, Operator, min_height, min_height_X, min_height_Y, max_height, max_height_X, max_height_Y, mean_height, range_height, avg_roughness, rms_roughness");
 
                 while (reader.Read()) {
                     try {
@@ -149,13 +149,20 @@ namespace Code
                         var rms_roughness = Math.Pow(
                             (errors[test_uid].rmsErr / testInfo[test_uid].count), 0.5);
 
-                        var newLine = $"{test_uid},{test_sTime},{test_planeId},{test_operator},{min_height},{min_height_X},{min_height_Y},{max_height},{max_height_X},{max_height_Y},{mean_height},{range_height},{avg_roughness},{rms_roughness}";
+                        var newLine = $"{test_uid},{testInfo[test_uid].count},{test_sTime},{test_planeId},{test_operator},{min_height},{min_height_X},{min_height_Y},{max_height},{max_height_X},{max_height_Y},{mean_height},{range_height},{avg_roughness},{rms_roughness}";
                         csv.AppendLine(newLine);
                     }
                     catch (KeyNotFoundException) {}
                 }
 
-                File.WriteAllText(".\\roughness_report.csv", csv.ToString());
+                var splitStr = connStr.Split('\\');
+                var index = splitStr.GetUpperBound(0);
+                var csvPath = "";
+                for (int i=0; i < index; i++) {
+                    csvPath += splitStr[i] + '\\';
+                }
+                csvPath += "roughness_report.csv";
+                File.WriteAllText(csvPath, csv.ToString());
                 WriteLine($"Report generated at {connStr}");
             }
         }
