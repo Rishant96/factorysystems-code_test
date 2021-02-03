@@ -4,7 +4,6 @@ using System.Collections.Generic;
 using Microsoft.Data.Sqlite;
 using System.IO;
 using CsvHelper;
-using static System.Console;
 
 namespace Code
 {
@@ -14,12 +13,12 @@ namespace Code
 
         static void Main(string[] args)
         {
-            Write("Enter the database location (leave empty for '.\\SurfaceRoughnessDB.db3'): ");
-            string dbPath = ReadLine();
+            Console.Write("Enter the database location (leave empty for '.\\SurfaceRoughnessDB.db3'): ");
+            string dbPath = Console.ReadLine();
 
-            Write("Enter the size of filter (default=3): ");
+            Console.Write("Enter the size of filter (default=3): ");
             Decimal filterSize;
-            decimal.TryParse(ReadLine(), out filterSize);
+            decimal.TryParse(Console.ReadLine(), out filterSize);
             if (filterSize <= 0.0M) {
                 filterSize = 3.0M;
             }
@@ -34,9 +33,12 @@ namespace Code
             {
                 connection.Open();
                 string measurements = "SELECT test_uid, x, y, height FROM Measurements"; 
-
                 using var getMeasurementsCmd = new SqliteCommand(measurements, connection);
-                SqliteDataReader reader = getMeasurementsCmd.ExecuteReader();
+                SqliteDataReader sqliteReader = getMeasurementsCmd.ExecuteReader();
+                
+                var dataTable = new System.Data.DataTable();
+                dataTable.Load(sqliteReader);
+                sqliteReader.Close();
 
                 var testUIDs = new SortedSet<int>();
 
@@ -54,15 +56,15 @@ namespace Code
                     )
                 > ();
 
+                var reader = dataTable.CreateDataReader();
                 while (reader.Read())
                 {
-                    int currTestUID = reader.GetInt32(0);
+                    int currTestUID = (int) reader.GetInt64(0);
                     bool isNewTestUID = testUIDs.Add(currTestUID);
 
-
-                    decimal height = reader.GetDecimal(3);
-                    decimal xPos = reader.GetDecimal(1);
-                    decimal yPos = reader.GetDecimal(2);
+                    decimal height = (decimal) reader.GetDouble(3);
+                    decimal xPos = (decimal) reader.GetDouble(1);
+                    decimal yPos = (decimal) reader.GetDouble(2);
 
                     if (isNewTestUID) {
                         testInfo[currTestUID] = (
@@ -89,24 +91,24 @@ namespace Code
                     }
                 }
 
-                string measurementsHeightsOnly = "SELECT test_uid, height FROM Measurements"; 
-
-                using var getHeightsOnlyCmd = new SqliteCommand(measurementsHeightsOnly, connection);
-                reader = getHeightsOnlyCmd.ExecuteReader();
-
+                reader.Close();
+                reader = dataTable.CreateDataReader();
                 var errors = new Dictionary<int, (decimal absErr, double rmsErr, int outliers)>();
 
                 while (reader.Read()) {
-                    int currID = reader.GetInt32(0);
+                    int currID = (int) reader.GetInt64(0);
                     if (testUIDs.Contains(currID)) {
                         if (! errors.ContainsKey(currID)) {
                             errors.Add(currID, (0.0M, 0.0, 0));
                         }
-                        decimal height = reader.GetDecimal(1);
+                        decimal height = (decimal) reader.GetDouble(3);
+                        // err: Calculates the difference between the each height observation and the mean
                         decimal err = height - 
                             (testInfo[currID].heightSum / testInfo[currID].count);
                         errors[currID] = (
+                            // Sum of all absolute errors
                             errors[currID].absErr + Math.Abs(err), 
+                            // Sum of all root mean squared errors
                             errors[currID].rmsErr + Math.Pow((double) err, 2),
                             0
                         );
@@ -117,21 +119,23 @@ namespace Code
                 }
                 
                 reader.Close();
-                reader = getHeightsOnlyCmd.ExecuteReader();
+                reader = dataTable.CreateDataReader();
                 while (reader.Read()) {
-                    int currID = reader.GetInt32(0);
+                    int currID = (int) reader.GetInt64(0);
+                    var height = (decimal) reader.GetDouble(3);
+                    
                     if (errors.ContainsKey(currID)) {
-                        var avg_height = testInfo[currID].heightSum / testInfo[currID].count;
+                        var avg_height = (testInfo[currID].heightSum / testInfo[currID].count);
                         var rms_roughness = (decimal) Math.Pow(
                             (errors[currID].rmsErr / testInfo[currID].count), 0.5);
 
-                        // WriteLine(Math.Abs(avg_roughness - reader.GetDecimal(1)).ToString() + ", " + rms_roughness * filterSize);
-                        
-
-                        if (Math.Abs(avg_height - reader.GetDecimal(1)) > rms_roughness * filterSize) {
+                        decimal err = height - 
+                            (testInfo[currID].heightSum / testInfo[currID].count);
+                    
+                        if (Math.Abs(avg_height - height) > rms_roughness * filterSize) {
                             errors[currID] = (
-                                errors[currID].absErr,
-                                errors[currID].rmsErr,
+                                errors[currID].absErr - Math.Abs(err),
+                                errors[currID].rmsErr - Math.Pow((double) err, 2),
                                 errors[currID].outliers + 1
                             );
                         }
@@ -141,13 +145,11 @@ namespace Code
                     }
                 }
 
-                string getTests = "SELECT * FROM Tests"; 
-        
-                using var getTestCmd = new SqliteCommand(getTests, connection);
-                reader = getTestCmd.ExecuteReader();
+                reader.Close();
+                reader = dataTable.CreateDataReader();
 
                 var splitStr = connStr.Split('\\');
-                var index = splitStr.GetUpperBound(0);
+                var index = splitStr.Length - 1;
                 var csvPath = "";
                 for (int i=0; i < index; i++) {
                     csvPath += splitStr[i] + '\\';
@@ -176,22 +178,26 @@ namespace Code
                         csvWriter.WriteField("total_count");
                         csvWriter.WriteField("avg_roughness");
                         csvWriter.WriteField("rms_roughness");
+                        csvWriter.WriteField("is_test_valid");
                         csvWriter.NextRecord();
 
                         
-                        while (reader.Read()) {
-                            try {
-                            int test_uid = reader.GetInt32(0);
-                                if (testInfo[test_uid].count < 1000) continue;
-                                
-                                DateTime test_sTime = reader.GetDateTime(1);
-                                string test_planeId = reader.GetString(2);
-                                string test_operator = "<UNKNOWN>";
-                                try {
-                                test_operator = reader.GetString(3);
-                                }
-                                catch (InvalidOperationException) {}
+                        string tests = "SELECT test_uid, sTime, PlaneID, Operator FROM Tests"; 
+                        using var getTestsCmd = new SqliteCommand(tests, connection);
+                        sqliteReader = getTestsCmd.ExecuteReader();
+                        
+                        while (sqliteReader.Read()) {
+                            int test_uid = (int) sqliteReader.GetInt64(0);                                
+                            DateTime test_sTime = sqliteReader.GetDateTime(1);
+                            string test_planeId = sqliteReader.GetString(2);
+                            string test_operator = "<UNKNOWN>";
 
+                            try {
+                                test_operator = sqliteReader.GetString(3);
+                            }
+                            catch (InvalidOperationException) {}
+
+                            try {
                                 var min_height = testInfo[test_uid].minHeight;
                                 var min_height_X = testInfo[test_uid].minPos.minHeightX;
                                 var min_height_Y = testInfo[test_uid].minPos.minHeightY;
@@ -208,6 +214,7 @@ namespace Code
                                     (errors[test_uid].rmsErr / testInfo[test_uid].count), 0.5);
 
                                 var outlier_count = errors[test_uid].outliers;
+                                var is_test_valid = testInfo[test_uid].count >= 1000;
 
                                 csvWriter.WriteField($"{test_uid}");
                                 csvWriter.WriteField($"{test_sTime}");
@@ -225,16 +232,40 @@ namespace Code
                                 csvWriter.WriteField($"{testInfo[test_uid].count}");
                                 csvWriter.WriteField($"{avg_roughness}");
                                 csvWriter.WriteField($"{rms_roughness}");
+                                csvWriter.WriteField($"{is_test_valid}");
                                 csvWriter.NextRecord();
                             }
-                            catch (KeyNotFoundException) {}
+                            catch (KeyNotFoundException) {
+                                csvWriter.WriteField($"{test_uid}");
+                                csvWriter.WriteField($"{test_sTime}");
+                                csvWriter.WriteField($"{test_planeId}");
+                                csvWriter.WriteField($"{test_operator}");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("<N/A>");
+                                csvWriter.WriteField("False");
+                                csvWriter.NextRecord();
+                            }
                         }
                         sw.Flush();
+                        sqliteReader.Close();
 
-                        WriteLine($"Report generated at {csvPath}");
+                        Console.WriteLine($"Filtered report generated at {csvPath}");
                     }
                 }
+                reader.Close();
             }
+
+            Console.ReadLine();
         }
     }
 }
