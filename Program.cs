@@ -17,7 +17,7 @@ namespace Code
             Write("Enter the database location (leave empty for '.\\SurfaceRoughnessDB.db3'): ");
             string dbPath = ReadLine();
 
-            Write("Enter the size of filter (default=3)");
+            Write("Enter the size of filter (default=3): ");
             Decimal filterSize;
             decimal.TryParse(ReadLine(), out filterSize);
             if (filterSize <= 0.0M) {
