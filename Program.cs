@@ -23,7 +23,6 @@ namespace Code
             if (filterSize <= 0.0M) {
                 filterSize = 3.0M;
             }
-            WriteLine("Filter Size: " + filterSize);
             
 
             var connStr =  dbPath == "" ? @".\SurfaceRoughnessDB.db3" : $@"{dbPath}";
