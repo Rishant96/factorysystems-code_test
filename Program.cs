@@ -14,8 +14,15 @@ namespace Code
 
         static void Main(string[] args)
         {
-            Write("Enter the database location (press Enter, leave empty for '.\\SurfaceRoughnessDB.db3'): ");
+            Write("Enter the database location (leave empty for '.\\SurfaceRoughnessDB.db3'): ");
             string dbPath = ReadLine();
+
+            Write("Enter the size of filter (default=3)");
+            Decimal filterSize;
+            decimal.TryParse(ReadLine(), out filterSize);
+            if (filterSize <= 0.0M) {
+                filterSize = 3.0M;
+            }
             
 
             var connStr =  dbPath == "" ? @".\SurfaceRoughnessDB.db3" : $@"{dbPath}";
@@ -43,9 +50,7 @@ namespace Code
                         decimal maxHeight, 
                         (decimal maxHeightX, decimal maxHeightY) maxPos, 
                         decimal heightSum,
-                        int count,
-                        decimal avgRoughness,
-                        decimal rmsRoughness
+                        int count
                     )
                 > ();
 
@@ -66,9 +71,7 @@ namespace Code
                             height,
                             (xPos, yPos),
                             height,
-                            1,
-                            -1.0M,
-                            -1.0M
+                            1
                         );
                     }
                     else {
@@ -81,9 +84,7 @@ namespace Code
                            isMax ? height : testInfo[currTestUID].maxHeight,
                            !isMax ? testInfo[currTestUID].maxPos : (xPos, yPos),
                            testInfo[currTestUID].heightSum + height,
-                           testInfo[currTestUID].count + 1,
-                           -1.0M,
-                           -1.0M
+                           testInfo[currTestUID].count + 1
                        );
                     }
                 }
@@ -93,21 +94,47 @@ namespace Code
                 using var getHeightsOnlyCmd = new SqliteCommand(measurementsHeightsOnly, connection);
                 reader = getHeightsOnlyCmd.ExecuteReader();
 
-                var errors = new Dictionary<int, (decimal absErr, double rmsErr)>();
+                var errors = new Dictionary<int, (decimal absErr, double rmsErr, int outliers)>();
 
                 while (reader.Read()) {
                     int currID = reader.GetInt32(0);
                     if (testUIDs.Contains(currID)) {
                         if (! errors.ContainsKey(currID)) {
-                            errors.Add(currID, (0.0M, 0.0));
+                            errors.Add(currID, (0.0M, 0.0, 0));
                         }
                         decimal height = reader.GetDecimal(1);
                         decimal err = height - 
                             (testInfo[currID].heightSum / testInfo[currID].count);
                         errors[currID] = (
                             errors[currID].absErr + Math.Abs(err), 
-                            errors[currID].rmsErr + Math.Pow((double) err, 2)
+                            errors[currID].rmsErr + Math.Pow((double) err, 2),
+                            0
                         );
+                    }
+                    else {
+                        throw new Exception("Something went wrong");
+                    }
+                }
+                
+                reader.Close();
+                reader = getHeightsOnlyCmd.ExecuteReader();
+                while (reader.Read()) {
+                    int currID = reader.GetInt32(0);
+                    if (errors.ContainsKey(currID)) {
+                        var avg_height = testInfo[currID].heightSum / testInfo[currID].count;
+                        var rms_roughness = (decimal) Math.Pow(
+                            (errors[currID].rmsErr / testInfo[currID].count), 0.5);
+
+                        // WriteLine(Math.Abs(avg_roughness - reader.GetDecimal(1)).ToString() + ", " + rms_roughness * filterSize);
+                        
+
+                        if (Math.Abs(avg_height - reader.GetDecimal(1)) > rms_roughness * filterSize) {
+                            errors[currID] = (
+                                errors[currID].absErr,
+                                errors[currID].rmsErr,
+                                errors[currID].outliers + 1
+                            );
+                        }
                     }
                     else {
                         throw new Exception("Something went wrong");
@@ -115,7 +142,7 @@ namespace Code
                 }
 
                 string getTests = "SELECT * FROM Tests"; 
-
+        
                 using var getTestCmd = new SqliteCommand(getTests, connection);
                 reader = getTestCmd.ExecuteReader();
 
@@ -134,7 +161,6 @@ namespace Code
                                 { HasHeaderRecord = true })) {
 
                         csvWriter.WriteField("test_uid");
-                        csvWriter.WriteField("test_count");
                         csvWriter.WriteField("sTime");
                         csvWriter.WriteField("PlaneID");
                         csvWriter.WriteField("Operator");
@@ -146,6 +172,8 @@ namespace Code
                         csvWriter.WriteField("max_height_Y");
                         csvWriter.WriteField("mean_height");
                         csvWriter.WriteField("range_height");
+                        csvWriter.WriteField("outlier_count");
+                        csvWriter.WriteField("total_count");
                         csvWriter.WriteField("avg_roughness");
                         csvWriter.WriteField("rms_roughness");
                         csvWriter.NextRecord();
@@ -179,8 +207,9 @@ namespace Code
                                 var rms_roughness = Math.Pow(
                                     (errors[test_uid].rmsErr / testInfo[test_uid].count), 0.5);
 
+                                var outlier_count = errors[test_uid].outliers;
+
                                 csvWriter.WriteField($"{test_uid}");
-                                csvWriter.WriteField($"{testInfo[test_uid].count}");
                                 csvWriter.WriteField($"{test_sTime}");
                                 csvWriter.WriteField($"{test_planeId}");
                                 csvWriter.WriteField($"{test_operator}");
@@ -192,6 +221,8 @@ namespace Code
                                 csvWriter.WriteField($"{max_height_Y}");
                                 csvWriter.WriteField($"{mean_height}");
                                 csvWriter.WriteField($"{range_height}");
+                                csvWriter.WriteField($"{outlier_count}");
+                                csvWriter.WriteField($"{testInfo[test_uid].count}");
                                 csvWriter.WriteField($"{avg_roughness}");
                                 csvWriter.WriteField($"{rms_roughness}");
                                 csvWriter.NextRecord();
@@ -200,7 +231,7 @@ namespace Code
                         }
                         sw.Flush();
 
-                        WriteLine($"Report generated at {connStr}");
+                        WriteLine($"Report generated at {csvPath}");
                     }
                 }
             }
