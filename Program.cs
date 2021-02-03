@@ -1,8 +1,9 @@
-﻿ using System;
+﻿using System;
 using System.Text;
 using System.Collections.Generic;
 using Microsoft.Data.Sqlite;
 using System.IO;
+using CsvHelper;
 using static System.Console;
 
 namespace Code
@@ -118,43 +119,6 @@ namespace Code
                 using var getTestCmd = new SqliteCommand(getTests, connection);
                 reader = getTestCmd.ExecuteReader();
 
-                var csv = new StringBuilder();
-                csv.AppendLine($"test_uid, test_count, sTime, PlaneID, Operator, min_height, min_height_X, min_height_Y, max_height, max_height_X, max_height_Y, mean_height, range_height, avg_roughness, rms_roughness");
-
-                while (reader.Read()) {
-                    try {
-                    int test_uid = reader.GetInt32(0);
-                        if (testInfo[test_uid].count < 1000) continue;
-                        
-                        DateTime test_sTime = reader.GetDateTime(1);
-                        string test_planeId = reader.GetString(2);
-                        string test_operator = "<UNKNOWN>";
-                        try {
-                        test_operator = reader.GetString(3);
-                        }
-                        catch (InvalidOperationException) {}
-
-                        var min_height = testInfo[test_uid].minHeight;
-                        var min_height_X = testInfo[test_uid].minPos.minHeightX;
-                        var min_height_Y = testInfo[test_uid].minPos.minHeightY;
-                        
-                        var max_height = testInfo[test_uid].maxHeight;
-                        var max_height_X = testInfo[test_uid].maxPos.maxHeightX;
-                        var max_height_Y = testInfo[test_uid].maxPos.maxHeightY;
-
-                        var mean_height = testInfo[test_uid].heightSum / testInfo[test_uid].count;
-                        var range_height = testInfo[test_uid].maxHeight - testInfo[test_uid].minHeight;
-
-                        var avg_roughness = errors[test_uid].absErr / testInfo[test_uid].count;
-                        var rms_roughness = Math.Pow(
-                            (errors[test_uid].rmsErr / testInfo[test_uid].count), 0.5);
-
-                        var newLine = $"{test_uid},{testInfo[test_uid].count},{test_sTime},{test_planeId},{test_operator},{min_height},{min_height_X},{min_height_Y},{max_height},{max_height_X},{max_height_Y},{mean_height},{range_height},{avg_roughness},{rms_roughness}";
-                        csv.AppendLine(newLine);
-                    }
-                    catch (KeyNotFoundException) {}
-                }
-
                 var splitStr = connStr.Split('\\');
                 var index = splitStr.GetUpperBound(0);
                 var csvPath = "";
@@ -162,8 +126,83 @@ namespace Code
                     csvPath += splitStr[i] + '\\';
                 }
                 csvPath += "roughness_report.csv";
-                File.WriteAllText(csvPath, csv.ToString());
-                WriteLine($"Report generated at {connStr}");
+
+                using (StreamWriter sw = new StreamWriter(csvPath, false, new UTF8Encoding(true))) {
+                    using (var csvWriter = new CsvHelper.CsvWriter(sw, 
+                        new CsvHelper.Configuration.CsvConfiguration(
+                            new System.Globalization.CultureInfo("en-US")) 
+                                { HasHeaderRecord = true })) {
+
+                        csvWriter.WriteField("test_uid");
+                        csvWriter.WriteField("test_count");
+                        csvWriter.WriteField("sTime");
+                        csvWriter.WriteField("PlaneID");
+                        csvWriter.WriteField("Operator");
+                        csvWriter.WriteField("min_height");
+                        csvWriter.WriteField("min_height_X");
+                        csvWriter.WriteField("min_height_Y");
+                        csvWriter.WriteField("max_height");
+                        csvWriter.WriteField("max_height_X");
+                        csvWriter.WriteField("max_height_Y");
+                        csvWriter.WriteField("mean_height");
+                        csvWriter.WriteField("range_height");
+                        csvWriter.WriteField("avg_roughness");
+                        csvWriter.WriteField("rms_roughness");
+                        csvWriter.NextRecord();
+
+                        
+                        while (reader.Read()) {
+                            try {
+                            int test_uid = reader.GetInt32(0);
+                                if (testInfo[test_uid].count < 1000) continue;
+                                
+                                DateTime test_sTime = reader.GetDateTime(1);
+                                string test_planeId = reader.GetString(2);
+                                string test_operator = "<UNKNOWN>";
+                                try {
+                                test_operator = reader.GetString(3);
+                                }
+                                catch (InvalidOperationException) {}
+
+                                var min_height = testInfo[test_uid].minHeight;
+                                var min_height_X = testInfo[test_uid].minPos.minHeightX;
+                                var min_height_Y = testInfo[test_uid].minPos.minHeightY;
+                                
+                                var max_height = testInfo[test_uid].maxHeight;
+                                var max_height_X = testInfo[test_uid].maxPos.maxHeightX;
+                                var max_height_Y = testInfo[test_uid].maxPos.maxHeightY;
+
+                                var mean_height = testInfo[test_uid].heightSum / testInfo[test_uid].count;
+                                var range_height = testInfo[test_uid].maxHeight - testInfo[test_uid].minHeight;
+
+                                var avg_roughness = errors[test_uid].absErr / testInfo[test_uid].count;
+                                var rms_roughness = Math.Pow(
+                                    (errors[test_uid].rmsErr / testInfo[test_uid].count), 0.5);
+
+                                csvWriter.WriteField($"{test_uid}");
+                                csvWriter.WriteField($"{testInfo[test_uid].count}");
+                                csvWriter.WriteField($"{test_sTime}");
+                                csvWriter.WriteField($"{test_planeId}");
+                                csvWriter.WriteField($"{test_operator}");
+                                csvWriter.WriteField($"{min_height}");
+                                csvWriter.WriteField($"{min_height_X}");
+                                csvWriter.WriteField($"{min_height_Y}");
+                                csvWriter.WriteField($"{max_height}");
+                                csvWriter.WriteField($"{max_height_X}");
+                                csvWriter.WriteField($"{max_height_Y}");
+                                csvWriter.WriteField($"{mean_height}");
+                                csvWriter.WriteField($"{range_height}");
+                                csvWriter.WriteField($"{avg_roughness}");
+                                csvWriter.WriteField($"{rms_roughness}");
+                                csvWriter.NextRecord();
+                            }
+                            catch (KeyNotFoundException) {}
+                        }
+                        sw.Flush();
+
+                        WriteLine($"Report generated at {connStr}");
+                    }
+                }
             }
         }
     }
